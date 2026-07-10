@@ -1,7 +1,4 @@
 {
-    "onedev-browser.url": "http://10.0.0.21:6610",
-    "onedev-browser.email": "onedev@diviance.club",
-    "onedev-browser.projectPath": "MangaVault/Source-SDK",
     "gitea.instanceUrl": "https://gitea.diviance.club",
     "gitea.authToken": "96b42a5a17475fa40d9f5ab028b7778ec3902e1e"
 }
