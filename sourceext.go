@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
+	pb "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1"
 )
 
 const (

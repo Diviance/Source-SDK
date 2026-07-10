@@ -6,8 +6,8 @@ import (
 	"io"
 	"sync"
 
+	pb "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
-	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
 )
 
 type Client struct {

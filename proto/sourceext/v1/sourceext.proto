@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package mangavault.sourceext.v1;
 
-option go_package = "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1;sourceextv1";
+option go_package = "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1;sourceextv1";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	pb "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
 )
 
 type Error struct {

@@ -5,11 +5,11 @@ import (
 	"io"
 	"os"
 
+	pb "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
-	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
 )
 
 var Handshake = plugin.HandshakeConfig{

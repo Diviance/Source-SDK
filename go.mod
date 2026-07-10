@@ -1,4 +1,4 @@
-module onedev.diviance.club/MangaVault/Source-SDK
+module gitea.diviance.club/Diviance/Source-SDK/Source-SDK
 
 go 1.26
 
