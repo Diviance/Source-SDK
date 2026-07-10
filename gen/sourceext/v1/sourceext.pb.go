@@ -2712,7 +2712,7 @@ const file_sourceext_v1_sourceext_proto_rawDesc = "" +
 	"\bMangaURL\x12(.mangavault.sourceext.v1.MangaURLRequest\x1a$.mangavault.sourceext.v1.URLResponse\x12^\n" +
 	"\n" +
 	"ChapterURL\x12*.mangavault.sourceext.v1.ChapterURLRequest\x1a$.mangavault.sourceext.v1.URLResponse\x12^\n" +
-	"\bGetImage\x12%.mangavault.sourceext.v1.ImageRequest\x1a).mangavault.sourceext.v1.ImageStreamFrame0\x01BQZOgitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1;sourceextv1b\x06proto3"
+	"\bGetImage\x12%.mangavault.sourceext.v1.ImageRequest\x1a).mangavault.sourceext.v1.ImageStreamFrame0\x01BFZDgitea.diviance.club/Diviance/Source-SDK/gen/sourceext/v1;sourceextv1b\x06proto3"
 
 var (
 	file_sourceext_v1_sourceext_proto_rawDescOnce sync.Once

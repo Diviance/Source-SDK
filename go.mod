@@ -1,4 +1,4 @@
-module gitea.diviance.club/Diviance/Source-SDK/Source-SDK
+module gitea.diviance.club/Diviance/Source-SDK
 
 go 1.26
 

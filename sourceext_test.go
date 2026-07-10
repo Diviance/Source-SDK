@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pb "gitea.diviance.club/Diviance/Source-SDK/Source-SDK/gen/sourceext/v1"
+	pb "gitea.diviance.club/Diviance/Source-SDK/gen/sourceext/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
