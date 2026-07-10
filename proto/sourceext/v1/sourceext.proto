@@ -1,0 +1,287 @@
+syntax = "proto3";
+
+package mangavault.sourceext.v1;
+
+option go_package = "mangavault/sourceextsdk/gen/sourceext/v1;sourceextv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_POPULAR_MANGA = 1;
+  CAPABILITY_LATEST_UPDATES = 2;
+  CAPABILITY_SEARCH_MANGA = 3;
+  CAPABILITY_MANGA_UPDATE = 4;
+  CAPABILITY_PAGE_LIST = 5;
+  CAPABILITY_IMAGE_URL = 6;
+  CAPABILITY_IMAGE = 7;
+  CAPABILITY_FILTERS = 8;
+  CAPABILITY_PREFERENCES = 9;
+  CAPABILITY_MANGA_URL = 10;
+  CAPABILITY_CHAPTER_URL = 11;
+}
+
+enum MangaStatus {
+  MANGA_STATUS_UNKNOWN = 0;
+  MANGA_STATUS_ONGOING = 1;
+  MANGA_STATUS_COMPLETED = 2;
+  MANGA_STATUS_LICENSED = 3;
+  MANGA_STATUS_PUBLISHING_FINISHED = 4;
+  MANGA_STATUS_CANCELLED = 5;
+  MANGA_STATUS_ON_HIATUS = 6;
+}
+
+enum UpdateStrategy {
+  UPDATE_STRATEGY_ALWAYS_UPDATE = 0;
+  UPDATE_STRATEGY_ONLY_FETCH_ONCE = 1;
+}
+
+enum FilterType {
+  FILTER_TYPE_UNSPECIFIED = 0;
+  FILTER_TYPE_HEADER = 1;
+  FILTER_TYPE_SEPARATOR = 2;
+  FILTER_TYPE_SELECT = 3;
+  FILTER_TYPE_TEXT = 4;
+  FILTER_TYPE_CHECK_BOX = 5;
+  FILTER_TYPE_TRI_STATE = 6;
+  FILTER_TYPE_GROUP = 7;
+  FILTER_TYPE_SORT = 8;
+}
+
+enum TriState {
+  TRI_STATE_IGNORE = 0;
+  TRI_STATE_INCLUDE = 1;
+  TRI_STATE_EXCLUDE = 2;
+}
+
+enum PreferenceType {
+  PREFERENCE_TYPE_UNSPECIFIED = 0;
+  PREFERENCE_TYPE_STRING = 1;
+  PREFERENCE_TYPE_SWITCH = 2;
+  PREFERENCE_TYPE_LIST = 3;
+  PREFERENCE_TYPE_MULTI_SELECT = 4;
+}
+
+message ExtensionInfo {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string upstream_name = 4;
+  string upstream_version = 5;
+  string commit = 6;
+  string built_at = 7;
+  string converter_name = 8;
+  string converter_version = 9;
+}
+
+message SourceInfo {
+  string id = 1;
+  string mihon_id = 2;
+  string name = 3;
+  string display_name = 4;
+  string lang = 5;
+  string base_url = 6;
+  string home_url = 7;
+  int32 version_id = 8;
+  bool supports_latest = 9;
+  bool is_configurable = 10;
+  bool is_nsfw = 11;
+  repeated Capability capabilities = 12;
+  repeated Filter filters = 13;
+  repeated Preference preferences = 14;
+  string filter_schema_revision = 15;
+}
+
+message ExtensionManifest {
+  uint32 protocol_version = 1;
+  ExtensionInfo extension = 2;
+  repeated SourceInfo sources = 3;
+}
+
+message SortSelection {
+  int32 index = 1;
+  bool ascending = 2;
+}
+
+message Filter {
+  string id = 1;
+  FilterType type = 2;
+  string name = 3;
+  google.protobuf.Value state = 4;
+  repeated string values = 5;
+  repeated string display_values = 6;
+  repeated Filter children = 7;
+  map<string, google.protobuf.Value> metadata = 8;
+}
+
+message FilterChange {
+  int32 position = 1;
+  repeated int32 path = 2;
+  oneof state {
+    int32 select_index = 3;
+    string text = 4;
+    bool checked = 5;
+    TriState tri_state = 6;
+    SortSelection sort = 7;
+    google.protobuf.Value custom = 8;
+  }
+}
+
+message PreferenceEntry {
+  string label = 1;
+  google.protobuf.Value value = 2;
+}
+
+message Preference {
+  string key = 1;
+  PreferenceType type = 2;
+  string title = 3;
+  string summary = 4;
+  google.protobuf.Value default_value = 5;
+  repeated PreferenceEntry entries = 6;
+  bool required = 7;
+  bool secret = 8;
+}
+
+message SManga {
+  string url = 1;
+  string title = 2;
+  optional string thumbnail_url = 3;
+  optional string artist = 4;
+  optional string author = 5;
+  MangaStatus status = 6;
+  optional string description = 7;
+  optional string genre = 8;
+  UpdateStrategy update_strategy = 9;
+  bool initialized = 10;
+  bytes memo_json = 11;
+}
+
+message SChapter {
+  string url = 1;
+  string name = 2;
+  float chapter_number = 3;
+  optional string scanlator = 4;
+  int64 date_upload_ms = 5;
+  bytes memo_json = 6;
+}
+
+message Page {
+  int32 index = 1;
+  optional string url = 2;
+  optional string image_url = 3;
+}
+
+message MangasPage {
+  repeated SManga mangas = 1;
+  bool has_next_page = 2;
+  string next_cursor = 3;
+}
+
+message SMangaUpdate {
+  SManga manga = 1;
+  repeated SChapter chapters = 2;
+}
+
+message SourceRequest {
+  string source_id = 1;
+}
+
+message ListingRequest {
+  string source_id = 1;
+  int32 page = 2;
+  string cursor = 3;
+  map<string, google.protobuf.Value> preferences = 4;
+}
+
+message SearchRequest {
+  string source_id = 1;
+  int32 page = 2;
+  string query = 3;
+  repeated FilterChange filters = 4;
+  string cursor = 5;
+  map<string, google.protobuf.Value> preferences = 6;
+}
+
+message MangaUpdateRequest {
+  string source_id = 1;
+  SManga manga = 2;
+  repeated SChapter chapters = 3;
+  bool fetch_details = 4;
+  bool fetch_chapters = 5;
+  map<string, google.protobuf.Value> preferences = 6;
+}
+
+message PageListRequest {
+  string source_id = 1;
+  SChapter chapter = 2;
+  map<string, google.protobuf.Value> preferences = 3;
+}
+
+message PageListResponse {
+  repeated Page pages = 1;
+}
+
+message PageURLRequest {
+  string source_id = 1;
+  Page page = 2;
+  map<string, google.protobuf.Value> preferences = 3;
+}
+
+message MangaURLRequest {
+  string source_id = 1;
+  SManga manga = 2;
+}
+
+message ChapterURLRequest {
+  string source_id = 1;
+  SChapter chapter = 2;
+}
+
+message URLResponse {
+  string url = 1;
+}
+
+message ImageRequest {
+  string source_id = 1;
+  map<string, google.protobuf.Value> preferences = 2;
+  oneof target {
+    Page page = 3;
+    SManga manga_thumbnail = 4;
+  }
+}
+
+message ImageMetadata {
+  string mime = 1;
+  int64 content_length = 2;
+  map<string, string> headers = 3;
+}
+
+message ImageStreamFrame {
+  oneof payload {
+    ImageMetadata metadata = 1;
+    bytes data = 2;
+  }
+}
+
+message ErrorDetail {
+  string source_id = 1;
+  bool retryable = 2;
+  int64 retry_after_ms = 3;
+  int32 upstream_status = 4;
+  string code = 5;
+}
+
+service SourceExtension {
+  rpc GetManifest(google.protobuf.Empty) returns (ExtensionManifest);
+  rpc PopularManga(ListingRequest) returns (MangasPage);
+  rpc LatestUpdates(ListingRequest) returns (MangasPage);
+  rpc SearchManga(SearchRequest) returns (MangasPage);
+  rpc MangaUpdate(MangaUpdateRequest) returns (SMangaUpdate);
+  rpc PageList(PageListRequest) returns (PageListResponse);
+  rpc ResolveImageURL(PageURLRequest) returns (URLResponse);
+  rpc MangaURL(MangaURLRequest) returns (URLResponse);
+  rpc ChapterURL(ChapterURLRequest) returns (URLResponse);
+  rpc GetImage(ImageRequest) returns (stream ImageStreamFrame);
+}
