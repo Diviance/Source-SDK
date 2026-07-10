@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pb "mangavault/sourceextsdk/gen/sourceext/v1"
+	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
 )
 
 type Error struct {

@@ -1,4 +1,4 @@
-module mangavault/sourceextsdk
+module onedev.diviance.club/MangaVault/Source-SDK
 
 go 1.26
 

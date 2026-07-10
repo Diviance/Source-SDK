@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
-	pb "mangavault/sourceextsdk/gen/sourceext/v1"
+	pb "onedev.diviance.club/MangaVault/Source-SDK/gen/sourceext/v1"
 )
 
 var Handshake = plugin.HandshakeConfig{

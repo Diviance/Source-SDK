@@ -8,7 +8,7 @@ protoc -I proto \
   --plugin="protoc-gen-go=$protoc_gen_go" \
   --plugin="protoc-gen-go-grpc=$protoc_gen_go_grpc" \
   --go_out=. \
-  --go_opt=module=mangavault/sourceextsdk \
+  --go_opt=module=onedev.diviance.club/MangaVault/Source-SDK \
   --go-grpc_out=. \
-  --go-grpc_opt=module=mangavault/sourceextsdk \
+  --go-grpc_opt=module=onedev.diviance.club/MangaVault/Source-SDK \
   proto/sourceext/v1/sourceext.proto
