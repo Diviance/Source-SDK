@@ -23,7 +23,14 @@ FlareSolverr-compatible `POST /v1` endpoint. Extension workers discover the
 endpoint through `MANGAVAULT_ANTIBOT_URL`; each extension must also provide an
 explicit upstream host allowlist when constructing the client. The solver is
 only contacted after a recognizable challenge response. Returned cookies and
-the browser User-Agent are then reused by the ordinary HTTP client.
+the browser User-Agent are then reused by the ordinary HTTP client. Set
+`Options.StateFile` to persist that identity across worker restarts.
+
+Use `Client.Do` for documents, `Client.DoDirect` for requests that must never
+invoke the solver, and `Client.DoAsset` for binary assets. `DoAsset` detects an
+asset challenge, refreshes the identity through the configured bootstrap URL,
+and retries the binary request directly so solver JSON is never mistaken for
+asset bytes.
 
 The module path is local during development. Change it to the final private
 Forgejo/Gitea module path before publishing the first SDK tag, and update the

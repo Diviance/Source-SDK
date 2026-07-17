@@ -72,6 +72,7 @@ type Options struct {
 	SolverURL        string
 	AllowedHosts     []string
 	BootstrapURL     string
+	StateFile        string
 	SolveTimeout     time.Duration
 	InspectLimit     int64
 }
@@ -87,6 +88,7 @@ type Client struct {
 	solveTimeout time.Duration
 	inspectLimit int64
 	configErr    error
+	stateStore   *stateStore
 
 	solveMu    sync.Mutex
 	stateMu    sync.RWMutex
@@ -122,6 +124,13 @@ func New(options Options) *Client {
 			direct.Jar = jar
 		}
 	}
+	store, err := loadStateStore(options.StateFile)
+	if err != nil {
+		return &Client{direct: direct, configErr: &Error{Kind: ErrorInvalidConfig, Op: "load state", URL: options.StateFile, Err: err}}
+	}
+	if store != nil && direct.Jar != nil {
+		direct.Jar = newPersistentJar(direct.Jar, store)
+	}
 	solver := options.SolverHTTPClient
 	if solver == nil {
 		solver = &http.Client{Timeout: options.SolveTimeout + 5*time.Second}
@@ -132,6 +141,13 @@ func New(options Options) *Client {
 		allowedHosts: make(map[string]struct{}, len(options.AllowedHosts)),
 		solveTimeout: options.SolveTimeout,
 		inspectLimit: options.InspectLimit,
+		stateStore:   store,
+	}
+	if store != nil {
+		client.userAgent = store.userAgent()
+		if client.userAgent != "" {
+			client.generation = 1
+		}
 	}
 	for _, raw := range options.AllowedHosts {
 		if host := normalizeHost(raw); host != "" {
@@ -212,6 +228,37 @@ func (c *Client) DoDirect(request *http.Request) (*http.Response, error) {
 	return c.direct.Do(c.withUserAgent(request))
 }
 
+// DoAsset performs a binary request directly. If the asset itself is
+// challenged, it solves the configured bootstrap document, applies the
+// resulting cookies and browser identity, and retries the binary request
+// directly. Solver response bodies are never returned as asset bytes.
+func (c *Client) DoAsset(request *http.Request) (*http.Response, error) {
+	if c == nil {
+		return nil, errors.New("nil anti-bot client")
+	}
+	if request == nil || request.URL == nil {
+		return nil, errors.New("nil HTTP request")
+	}
+	if c.configErr != nil {
+		return nil, c.configErr
+	}
+	generation := c.currentGeneration()
+	response, err := c.direct.Do(c.withUserAgent(request))
+	if err != nil || !c.canSolve(request.URL) {
+		return response, err
+	}
+	challenge, err := c.isChallenge(response)
+	if err != nil {
+		response.Body.Close()
+		return nil, err
+	}
+	if !challenge {
+		return response, nil
+	}
+	response.Body.Close()
+	return c.solveAssetOrRetry(request, generation)
+}
+
 func (c *Client) solveOrRetry(request *http.Request, generation uint64) (*http.Response, error) {
 	c.solveMu.Lock()
 	defer c.solveMu.Unlock()
@@ -239,6 +286,38 @@ func (c *Client) solveOrRetry(request *http.Request, generation uint64) (*http.R
 	return c.retry(request)
 }
 
+func (c *Client) solveAssetOrRetry(request *http.Request, generation uint64) (*http.Response, error) {
+	c.solveMu.Lock()
+	defer c.solveMu.Unlock()
+	if c.currentGeneration() == generation {
+		target := c.bootstrapURL
+		if target == nil || !strings.EqualFold(target.Hostname(), request.URL.Hostname()) {
+			target = &url.URL{Scheme: request.URL.Scheme, Host: request.URL.Host, Path: "/"}
+		}
+		solution, err := c.solve(request.Context(), target)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.applySolution(request.URL, solution); err != nil {
+			return nil, err
+		}
+	}
+	response, err := c.retry(request)
+	if err != nil {
+		return nil, err
+	}
+	challenge, inspectErr := c.isChallenge(response)
+	if inspectErr != nil {
+		response.Body.Close()
+		return nil, inspectErr
+	}
+	if challenge {
+		response.Body.Close()
+		return nil, &Error{Kind: ErrorChallengeUnsolved, Op: "retry asset", URL: request.URL.String(), Status: response.StatusCode, Message: "asset remained challenged after refreshing the browser identity"}
+	}
+	return response, nil
+}
+
 func (c *Client) retry(request *http.Request) (*http.Response, error) {
 	retry := request.Clone(request.Context())
 	if request.Body != nil && request.Body != http.NoBody {
@@ -257,7 +336,13 @@ func (c *Client) retry(request *http.Request) (*http.Response, error) {
 func (c *Client) solve(ctx context.Context, target *url.URL) (solverSolution, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.solveTimeout)
 	defer cancel()
-	payload, err := json.Marshal(solverRequest{Command: "request.get", URL: target.String(), MaxTimeout: c.solveTimeout.Milliseconds()})
+	input := solverRequest{Command: "request.get", URL: target.String(), MaxTimeout: c.solveTimeout.Milliseconds()}
+	if c.direct.Jar != nil {
+		for _, cookie := range c.direct.Jar.Cookies(target) {
+			input.Cookies = append(input.Cookies, solverRequestCookie{Name: cookie.Name, Value: cookie.Value})
+		}
+	}
+	payload, err := json.Marshal(input)
 	if err != nil {
 		return solverSolution{}, err
 	}
@@ -319,7 +404,13 @@ func (c *Client) applySolution(target *url.URL, solution solverSolution) error {
 	c.stateMu.Lock()
 	c.userAgent = strings.TrimSpace(solution.UserAgent)
 	c.generation++
+	userAgent := c.userAgent
 	c.stateMu.Unlock()
+	if c.stateStore != nil {
+		if err := c.stateStore.setUserAgent(userAgent); err != nil {
+			return &Error{Kind: ErrorInvalidConfig, Op: "save state", URL: c.stateStore.path, Err: err}
+		}
+	}
 	return nil
 }
 
@@ -375,10 +466,16 @@ func (c *Client) isChallenge(response *http.Response) (bool, error) {
 	}
 	response.Body = &prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), response.Body), Closer: response.Body}
 	body := strings.ToLower(string(prefix))
-	for _, marker := range []string{"cf-chl-", "cdn-cgi/challenge-platform", "<title>just a moment", "cf-turnstile", "cloudflare ray id", "attention required! | cloudflare", "ddos-guard"} {
+	for _, marker := range []string{"cf-chl-", "<title>just a moment", "cloudflare ray id", "attention required! | cloudflare", "ddos-guard"} {
 		if strings.Contains(body, marker) {
 			return true, nil
 		}
+	}
+	// Cloudflare injects challenge-platform/scripts/jsd into ordinary 200
+	// pages for JavaScript detections. It is only a challenge signal when the
+	// response is unsuccessful or contains the managed-challenge bootstrap.
+	if strings.Contains(body, "cdn-cgi/challenge-platform") && (response.StatusCode < 200 || response.StatusCode >= 300 || strings.Contains(body, "window._cf_chl_opt")) {
+		return true, nil
 	}
 	return false, nil
 }
@@ -418,9 +515,15 @@ type prefixedReadCloser struct {
 }
 
 type solverRequest struct {
-	Command    string `json:"cmd"`
-	URL        string `json:"url"`
-	MaxTimeout int64  `json:"maxTimeout"`
+	Command    string                `json:"cmd"`
+	URL        string                `json:"url"`
+	MaxTimeout int64                 `json:"maxTimeout"`
+	Cookies    []solverRequestCookie `json:"cookies,omitempty"`
+}
+
+type solverRequestCookie struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type solverResponse struct {

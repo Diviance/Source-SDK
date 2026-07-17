@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,25 @@ func TestDirectRequestDoesNotUseSolver(t *testing.T) {
 	response.Body.Close()
 	if solverCalls.Load() != 0 {
 		t.Fatalf("solver calls = %d", solverCalls.Load())
+	}
+}
+
+func TestOrdinaryCloudflareJSDPageDoesNotUseSolver(t *testing.T) {
+	var solverCalls atomic.Int32
+	solver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { solverCalls.Add(1) }))
+	defer solver.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Server", "cloudflare")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, `<html><body>ordinary<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body></html>`)
+	}))
+	defer upstream.Close()
+	client := New(Options{SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}})
+	response := mustDo(t, client, http.MethodGet, upstream.URL, "")
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if !strings.Contains(string(body), "ordinary") || solverCalls.Load() != 0 {
+		t.Fatalf("body = %q, solver calls = %d", body, solverCalls.Load())
 	}
 }
 
@@ -72,6 +92,80 @@ func TestChallengeUsesSolverAndReusesIdentity(t *testing.T) {
 	second.Body.Close()
 	if string(secondBody) != "<html>direct after solve</html>" || solverCalls.Load() != 1 {
 		t.Fatalf("second body = %q, solver calls = %d", secondBody, solverCalls.Load())
+	}
+}
+
+func TestSolvedIdentityPersistsAcrossClients(t *testing.T) {
+	const browserUA = "Persistent Browser UA"
+	var solverCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("cf_clearance")
+		if err == nil && cookie.Value == "persisted" && r.UserAgent() == browserUA {
+			io.WriteString(w, "<html>direct persisted session</html>")
+			return
+		}
+		w.Header().Set("CF-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	upstreamURL, _ := url.Parse(upstream.URL)
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		solverCalls.Add(1)
+		io.WriteString(w, `{"status":"ok","solution":{"url":"`+upstream.URL+`","status":200,"cookies":[{"name":"cf_clearance","value":"persisted","domain":"`+upstreamURL.Hostname()+`","path":"/"}],"userAgent":"`+browserUA+`","response":"<html>solved</html>"}}`)
+	}))
+	defer solver.Close()
+	stateFile := filepath.Join(t.TempDir(), "antibot.json")
+	firstClient := New(Options{SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}, StateFile: stateFile})
+	first := mustDo(t, firstClient, http.MethodGet, upstream.URL, "")
+	first.Body.Close()
+
+	secondClient := New(Options{SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}, StateFile: stateFile})
+	second := mustDo(t, secondClient, http.MethodGet, upstream.URL, "")
+	body, _ := io.ReadAll(second.Body)
+	second.Body.Close()
+	if string(body) != "<html>direct persisted session</html>" || solverCalls.Load() != 1 {
+		t.Fatalf("body = %q, solver calls = %d", body, solverCalls.Load())
+	}
+}
+
+func TestAssetChallengeSolvesBootstrapAndRetriesDirect(t *testing.T) {
+	const browserUA = "Asset Browser UA"
+	var solverCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("cf_clearance")
+		if r.URL.Path == "/cover.jpg" && err == nil && cookie.Value == "asset" && r.UserAgent() == browserUA {
+			w.Header().Set("Content-Type", "image/jpeg")
+			io.WriteString(w, "jpeg bytes")
+			return
+		}
+		w.Header().Set("CF-Mitigated", "challenge")
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	upstreamURL, _ := url.Parse(upstream.URL)
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		solverCalls.Add(1)
+		var input solverRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.URL != upstream.URL+"/" {
+			t.Fatalf("solver target = %q", input.URL)
+		}
+		io.WriteString(w, `{"status":"ok","solution":{"url":"`+upstream.URL+`/","status":200,"cookies":[{"name":"cf_clearance","value":"asset","domain":"`+upstreamURL.Hostname()+`","path":"/"}],"userAgent":"`+browserUA+`","response":"<html>solved</html>"}}`)
+	}))
+	defer solver.Close()
+	client := New(Options{SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}, BootstrapURL: upstream.URL + "/"})
+	request, _ := http.NewRequest(http.MethodGet, upstream.URL+"/cover.jpg", nil)
+	response, err := client.DoAsset(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if string(body) != "jpeg bytes" || response.Header.Get("Content-Type") != "image/jpeg" || solverCalls.Load() != 1 {
+		t.Fatalf("body = %q, content type = %q, solver calls = %d", body, response.Header.Get("Content-Type"), solverCalls.Load())
 	}
 }
 
