@@ -1,4 +1,4 @@
-module gitea.diviance.club/Diviance/Source-SDK
+module github.com/Diviance/Source-SDK
 
 go 1.26
 

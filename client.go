@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	pb "gitea.diviance.club/Diviance/Source-SDK/gen/sourceext/v1"
+	pb "github.com/Diviance/Source-SDK/gen/sourceext/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
