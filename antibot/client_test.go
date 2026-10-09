@@ -3,6 +3,7 @@ package antibot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,138 @@ import (
 	"testing"
 	"time"
 )
+
+func TestNewFromEnvironmentAppliesSolveTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		env      string
+		explicit time.Duration
+		want     time.Duration
+		invalid  bool
+	}{
+		{name: "default", want: time.Minute},
+		{name: "configured", env: "90", want: 90 * time.Second},
+		{name: "trimmed", env: " 120 ", want: 2 * time.Minute},
+		{name: "maximum", env: "300", want: 5 * time.Minute},
+		{name: "explicit wins", env: "90", explicit: 2 * time.Second, want: 2 * time.Second},
+		{name: "explicit ignores invalid environment", env: "invalid", explicit: 2 * time.Second, want: 2 * time.Second},
+		{name: "invalid", env: "invalid", invalid: true},
+		{name: "zero", env: "0", invalid: true},
+		{name: "negative", env: "-1", invalid: true},
+		{name: "too large", env: "301", invalid: true},
+		{name: "overflow", env: "999999999999999999999", invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(SolverURLEnvironment, "http://solver.invalid/v1")
+			t.Setenv(SolverTimeoutEnvironment, test.env)
+			client := NewFromEnvironment(Options{SolveTimeout: test.explicit, AllowedHosts: []string{"upstream.invalid"}})
+			if test.invalid {
+				request, _ := http.NewRequest(http.MethodGet, "http://upstream.invalid", nil)
+				_, err := client.Do(request)
+				var configErr *Error
+				if !errors.As(err, &configErr) || configErr.Kind != ErrorInvalidConfig {
+					t.Fatalf("configuration error = %v", err)
+				}
+				return
+			}
+			if !client.Enabled() || client.solveTimeout != test.want || client.solver.Timeout != test.want+solverResponseGrace {
+				t.Fatalf("enabled = %v, solve timeout = %s, HTTP timeout = %s; want %s plus response allowance", client.Enabled(), client.solveTimeout, client.solver.Timeout, test.want)
+			}
+		})
+	}
+}
+
+func TestSolverReceivesConfiguredTimeout(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("CF-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	maxTimeout := make(chan int64, 1)
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input solverRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		maxTimeout <- input.MaxTimeout
+		io.WriteString(w, `{"status":"ok","solution":{"url":"`+upstream.URL+`","status":200,"response":"solved"}}`)
+	}))
+	defer solver.Close()
+	t.Setenv(SolverURLEnvironment, solver.URL)
+	t.Setenv(SolverTimeoutEnvironment, "120")
+	client := NewFromEnvironment(Options{AllowedHosts: []string{upstream.URL}})
+	response := mustDo(t, client, http.MethodGet, upstream.URL, "")
+	response.Body.Close()
+	select {
+	case got := <-maxTimeout:
+		if got != 120000 {
+			t.Fatalf("solver maxTimeout = %d, want 120000 milliseconds", got)
+		}
+	default:
+		t.Fatal("solver did not receive a request")
+	}
+}
+
+func TestSlowSolverResponseUsesGraceAndIgnoresShortHTTPTimeout(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("CF-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.(http.Flusher).Flush()
+		select {
+		case <-time.After(150 * time.Millisecond):
+			io.WriteString(w, `{"status":"ok","solution":{"url":"`+upstream.URL+`","status":200,"response":"slow solution"}}`)
+		case <-r.Context().Done():
+		}
+	}))
+	defer solver.Close()
+	shared := &http.Client{Timeout: 25 * time.Millisecond}
+	client := New(Options{
+		HTTPClient: &http.Client{Timeout: 50 * time.Millisecond}, SolverHTTPClient: shared,
+		SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}, SolveTimeout: 75 * time.Millisecond,
+	})
+	response := mustDo(t, client, http.MethodGet, upstream.URL, "")
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || string(body) != "slow solution" {
+		t.Fatalf("slow response = %q, %v", body, err)
+	}
+	if shared.Timeout != 25*time.Millisecond {
+		t.Fatal("shared solver HTTP client was mutated")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestUnresponsiveSolverStopsAtDeadline(t *testing.T) {
+	solveTimeout := 10 * time.Millisecond
+	client := New(Options{
+		SolverURL: "http://solver.invalid/v1", SolveTimeout: solveTimeout, AllowedHosts: []string{"upstream.invalid"},
+		SolverHTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})},
+	})
+	target, _ := url.Parse("http://upstream.invalid")
+	started := time.Now()
+	_, err := client.solve(context.Background(), target)
+	elapsed := time.Since(started)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unresponsive solver error = %v, want deadline exceeded", err)
+	}
+	if elapsed < solveTimeout+solverResponseGrace || elapsed > solveTimeout+solverResponseGrace+time.Second {
+		t.Fatalf("solver waited %s, want solve timeout plus response allowance", elapsed)
+	}
+}
 
 func TestDirectRequestDoesNotUseSolver(t *testing.T) {
 	var solverCalls atomic.Int32
@@ -273,6 +406,7 @@ func TestContextCancellationStopsSolver(t *testing.T) {
 	}))
 	defer solver.Close()
 	client := New(Options{SolverURL: solver.URL, AllowedHosts: []string{upstream.URL}, SolveTimeout: time.Second})
+	defer close(releaseSolver)
 	ctx, cancel := context.WithCancel(context.Background())
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, upstream.URL, nil)
 	result := make(chan error, 1)
@@ -282,10 +416,9 @@ func TestContextCancellationStopsSolver(t *testing.T) {
 	}()
 	<-solverStarted
 	cancel()
-	if err := <-result; err == nil {
-		t.Fatal("expected cancellation error")
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
 	}
-	close(releaseSolver)
 }
 
 func mustDo(t *testing.T, client *Client, method, target, body string) *http.Response {

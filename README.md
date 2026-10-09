@@ -26,6 +26,13 @@ only contacted after a recognizable challenge response. Returned cookies and
 the browser User-Agent are then reused by the ordinary HTTP client. Set
 `Options.StateFile` to persist that identity across worker restarts.
 
+`NewFromEnvironment` reads `MANGAVAULT_ANTIBOT_TIMEOUT_SECONDS` (1–300 seconds)
+when `Options.SolveTimeout` is unset, with a 60-second default. The solver receives
+that value as its `maxTimeout`; the HTTP request deadline allows five additional
+seconds to receive the response. A shorter solver HTTP client timeout is raised
+on a copy of that client. Explicit caller deadlines and cancellation still take
+precedence.
+
 Use `Client.Do` for documents, `Client.DoDirect` for requests that must never
 invoke the solver, and `Client.DoAsset` for binary assets. `DoAsset` detects an
 asset challenge, refreshes the identity through the configured bootstrap URL,

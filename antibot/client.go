@@ -23,8 +23,11 @@ const (
 	// SolverURLEnvironment is the environment variable used by extension
 	// workers to discover the configured FlareSolverr-compatible endpoint.
 	SolverURLEnvironment = "MANGAVAULT_ANTIBOT_URL"
+	// SolverTimeoutEnvironment sets the solve timeout in whole seconds.
+	SolverTimeoutEnvironment = "MANGAVAULT_ANTIBOT_TIMEOUT_SECONDS"
 
 	defaultSolveTimeout = 60 * time.Second
+	solverResponseGrace = 5 * time.Second
 	defaultInspectLimit = 512 << 10
 	maxSolverResponse   = 32 << 20
 )
@@ -96,11 +99,25 @@ type Client struct {
 	generation uint64
 }
 
-// NewFromEnvironment constructs a client using MANGAVAULT_ANTIBOT_URL when
-// Options.SolverURL is empty.
+// NewFromEnvironment fills an unset solver URL and solve timeout from
+// MANGAVAULT_ANTIBOT_URL and MANGAVAULT_ANTIBOT_TIMEOUT_SECONDS respectively.
+// Explicit options take precedence over the environment.
 func NewFromEnvironment(options Options) *Client {
 	if strings.TrimSpace(options.SolverURL) == "" {
 		options.SolverURL = strings.TrimSpace(os.Getenv(SolverURLEnvironment))
+	}
+	if options.SolveTimeout <= 0 {
+		if raw := strings.TrimSpace(os.Getenv(SolverTimeoutEnvironment)); raw != "" {
+			seconds, err := strconv.Atoi(raw)
+			if err != nil || seconds < 1 || seconds > 300 {
+				return &Client{configErr: &Error{
+					Kind: ErrorInvalidConfig, Op: "configure",
+					Message: SolverTimeoutEnvironment + " must be between 1 and 300 seconds",
+					Err:     err,
+				}}
+			}
+			options.SolveTimeout = time.Duration(seconds) * time.Second
+		}
 	}
 	return New(options)
 }
@@ -133,7 +150,12 @@ func New(options Options) *Client {
 	}
 	solver := options.SolverHTTPClient
 	if solver == nil {
-		solver = &http.Client{Timeout: options.SolveTimeout + 5*time.Second}
+		solver = &http.Client{Timeout: options.SolveTimeout + solverResponseGrace}
+	} else if solver.Timeout > 0 && solver.Timeout < options.SolveTimeout+solverResponseGrace {
+		// Do not let a shared client's shorter total timeout truncate solving.
+		copy := *solver
+		copy.Timeout = options.SolveTimeout + solverResponseGrace
+		solver = &copy
 	}
 	client := &Client{
 		direct:       direct,
@@ -334,7 +356,9 @@ func (c *Client) retry(request *http.Request) (*http.Response, error) {
 }
 
 func (c *Client) solve(ctx context.Context, target *url.URL) (solverSolution, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.solveTimeout)
+	// maxTimeout is the solver's work budget. Allow time to receive and decode
+	// its response after that budget, while retaining caller cancellation.
+	ctx, cancel := context.WithTimeout(ctx, c.solveTimeout+solverResponseGrace)
 	defer cancel()
 	input := solverRequest{Command: "request.get", URL: target.String(), MaxTimeout: c.solveTimeout.Milliseconds()}
 	if c.direct.Jar != nil {
