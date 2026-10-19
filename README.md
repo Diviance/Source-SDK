@@ -42,3 +42,7 @@ asset bytes.
 The module path is local during development. Change it to the final private
 Forgejo/Gitea module path before publishing the first SDK tag, and update the
 workspace replacements in the backend and extension modules at the same time.
+
+## Structured manga metadata (v0.1.7)
+
+`SManga.publisher` is an optional publisher string. `SManga.characters` and `SManga.series` are repeated names; normalize source labels such as Parody or Parodies to Series, keep each name as a separate value, and omit these metadata lines from the synopsis. The added fields use tags 12–14 and remain compatible with protocol version 1 and older workers/hosts. Unavailable publisher values are omitted; unavailable lists are empty. SDK consumers should publish/use tag `v0.1.7` for these fields.

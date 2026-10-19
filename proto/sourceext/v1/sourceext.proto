@@ -156,6 +156,9 @@ message SManga {
   UpdateStrategy update_strategy = 9;
   bool initialized = 10;
   bytes memo_json = 11;
+  optional string publisher = 12;
+  repeated string characters = 13;
+  repeated string series = 14;
 }
 
 message SChapter {
